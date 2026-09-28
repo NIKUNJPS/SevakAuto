@@ -341,6 +341,256 @@
     });
   }
 
+  /* ---------------- workshop reels ---------------- */
+  var SND = {
+    on: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>',
+    off: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>'
+  };
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var saveData = navigator.connection && navigator.connection.saveData;
+
+  function playSafe(v, withSound) {
+    v.muted = !withSound;
+    var p = v.play();
+    if (p && p.catch) {
+      p.catch(function () {
+        if (withSound) { v.muted = true; v.play().catch(function () {}); }
+      });
+    }
+  }
+
+  // full-screen viewer, opened from any [data-reel] element
+  function initReelViewer() {
+    if (!document.querySelector('[data-reel]')) return;
+    var box = el('div', 'rv');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', 'Workshop video player');
+    box.innerHTML =
+      '<div class="rv__stage">' +
+        '<video playsinline preload="auto"></video>' +
+        '<span class="rv__bar"></span><span class="rv__count"></span>' +
+        '<button class="rv__tap" type="button" aria-label="Pause or play"></button>' +
+        '<span class="rv__paused rc__play">' + SND.play + '</span>' +
+        '<div class="rv__info"><span class="reel__tag"></span><h3></h3>' +
+          '<a class="btn btn--wa btn--sm" target="_blank" rel="noopener">' + ICON.wa + '<span>Get a quote for this</span></a></div>' +
+      '</div>' +
+      '<button class="rv__btn rv__x" type="button" aria-label="Close video">' + ICON.x + '</button>' +
+      '<button class="rv__btn rv__mute" type="button" aria-label="Mute">' + SND.on + '</button>' +
+      '<button class="rv__btn rv__prev" type="button" aria-label="Previous video">' + ICON.prev + '</button>' +
+      '<button class="rv__btn rv__next" type="button" aria-label="Next video">' + ICON.next + '</button>';
+    document.body.appendChild(box);
+
+    var video = box.querySelector('video');
+    var bar = box.querySelector('.rv__bar');
+    var count = box.querySelector('.rv__count');
+    var tag = box.querySelector('.reel__tag');
+    var title = box.querySelector('h3');
+    var cta = box.querySelector('.rv__info a');
+    var muteBtn = box.querySelector('.rv__mute');
+    var list = [], idx = 0, last = null, muted = false;
+
+    function setMute(m) {
+      muted = m;
+      video.muted = m;
+      muteBtn.innerHTML = m ? SND.off : SND.on;
+      muteBtn.setAttribute('aria-label', m ? 'Unmute' : 'Mute');
+    }
+    function show(i) {
+      idx = (i + list.length) % list.length;
+      var it = list[idx];
+      var t = it.getAttribute('data-title') || '';
+      video.src = it.getAttribute('data-src');
+      var img = it.querySelector('img, video');
+      video.poster = img ? (img.getAttribute('src') || img.getAttribute('poster') || '') : '';
+      tag.textContent = it.getAttribute('data-tag') || '';
+      title.textContent = t;
+      count.textContent = (idx + 1) + ' / ' + list.length;
+      cta.href = wa('Hi, I saw the "' + t + '" video on your website. I would like a quote for similar work on my car.');
+      bar.style.width = '0';
+      box.classList.remove('is-paused');
+      playSafe(video, !muted);
+    }
+    function open(item) {
+      var group = item.closest('[data-reel-group]') || document;
+      list = Array.prototype.filter.call(group.querySelectorAll('[data-reel]'), function (n) { return !n.hidden; });
+      last = document.activeElement;
+      document.dispatchEvent(new CustomEvent('reelviewer', { detail: true }));
+      box.classList.add('is-open');
+      document.body.style.overflow = 'hidden';
+      setMute(false);
+      show(Math.max(0, list.indexOf(item)));
+      box.querySelector('.rv__x').focus();
+    }
+    function close() {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      box.classList.remove('is-open');
+      document.body.style.overflow = '';
+      document.dispatchEvent(new CustomEvent('reelviewer', { detail: false }));
+      if (last) last.focus();
+    }
+    function toggle() {
+      if (video.paused) { playSafe(video, !muted); box.classList.remove('is-paused'); }
+      else { video.pause(); box.classList.add('is-paused'); }
+    }
+
+    video.addEventListener('timeupdate', function () {
+      if (video.duration) bar.style.width = (video.currentTime / video.duration * 100) + '%';
+    });
+    video.addEventListener('ended', function () { show(idx + 1); });
+    box.querySelector('.rv__tap').addEventListener('click', toggle);
+    box.querySelector('.rv__x').addEventListener('click', close);
+    box.querySelector('.rv__prev').addEventListener('click', function () { show(idx - 1); });
+    box.querySelector('.rv__next').addEventListener('click', function () { show(idx + 1); });
+    muteBtn.addEventListener('click', function () { setMute(!muted); });
+    box.addEventListener('click', function (e) { if (e.target === box) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (!box.classList.contains('is-open')) return;
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); show(idx - 1); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); show(idx + 1); }
+      else if (e.key === ' ' && e.target.tagName !== 'A') { e.preventDefault(); toggle(); }
+      else if (e.key === 'm' || e.key === 'M') setMute(!muted);
+    });
+    var tx = 0, ty = 0;
+    box.addEventListener('touchstart', function (e) { tx = e.touches[0].clientX; ty = e.touches[0].clientY; }, { passive: true });
+    box.addEventListener('touchend', function (e) {
+      var dx = e.changedTouches[0].clientX - tx, dy = e.changedTouches[0].clientY - ty;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 50) return;
+      if (Math.abs(dy) > Math.abs(dx)) show(idx + (dy < 0 ? 1 : -1));
+      else show(idx + (dx < 0 ? 1 : -1));
+    });
+
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('.rc__sound')) return;
+      var item = e.target.closest('[data-reel]');
+      if (item && !box.contains(item)) { e.preventDefault(); open(item); }
+    });
+  }
+
+  // home page top-10 strip: the card in view plays, one at a time; sound is opt-in
+  function initReelStrip() {
+    var strip = document.querySelector('[data-reel-strip]');
+    if (!strip) return;
+    var cards = Array.prototype.slice.call(strip.querySelectorAll('.rc'));
+    var hints = document.querySelectorAll('[data-sound-toggle]');
+    var sound = false, active = null, inView = false, paused = false;
+    var ratios = new Map();
+
+    function vid(card) {
+      var v = card.querySelector('video');
+      if (!v.getAttribute('src')) { v.src = v.getAttribute('data-src'); v.preload = 'auto'; }
+      return v;
+    }
+    function paintSound() {
+      cards.forEach(function (c) {
+        var b = c.querySelector('.rc__sound');
+        b.innerHTML = sound ? SND.on : SND.off;
+        b.setAttribute('aria-pressed', sound ? 'true' : 'false');
+        b.setAttribute('aria-label', sound ? 'Mute' : 'Turn sound on');
+      });
+      Array.prototype.forEach.call(hints, function (h) {
+        h.setAttribute('aria-pressed', sound ? 'true' : 'false');
+        h.innerHTML = (sound ? SND.on : SND.off) + '<span>' + (sound ? 'Sound on' : 'Tap for sound') + '</span>';
+      });
+    }
+    function activate(card) {
+      if (active && active !== card) {
+        var old = active.querySelector('video');
+        old.pause();
+        active.classList.remove('is-active', 'is-playing');
+      }
+      active = card;
+      if (!card || paused || !inView) return;
+      card.classList.add('is-active', 'is-playing');
+      playSafe(vid(card), sound);
+    }
+    function pick() {
+      var best = null, br = 0;
+      cards.forEach(function (c) {
+        var r = ratios.get(c) || 0;
+        if (r > br + 0.01) { br = r; best = c; }
+      });
+      if (best && br > 0.55) activate(best);
+    }
+
+    if (reduceMotion || saveData) {
+      // no autoplay: cards stay as posters, tap opens the viewer
+      cards.forEach(function (c) { c.querySelector('.rc__sound').hidden = true; });
+    } else if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) { ratios.set(en.target, en.intersectionRatio); });
+        pick();
+      }, { threshold: [0, 0.3, 0.55, 0.8, 1] });
+      cards.forEach(function (c) { io.observe(c); });
+      var secIo = new IntersectionObserver(function (entries) {
+        inView = entries[0].isIntersecting;
+        if (!inView && active) { active.querySelector('video').pause(); active.classList.remove('is-playing'); }
+        else if (inView) { if (active) activate(active); else pick(); }
+      }, { threshold: 0.25 });
+      secIo.observe(strip);
+      cards.forEach(function (c) {
+        c.addEventListener('mouseenter', function () { if (window.matchMedia('(hover: hover)').matches) activate(c); });
+      });
+    }
+
+    function toggleSound(card) {
+      sound = !sound;
+      paintSound();
+      if (card && card !== active) activate(card);
+      else if (active) {
+        var v = vid(active);
+        v.muted = !sound;
+        if (v.paused) activate(active);
+      } else activate(cards[0]);
+    }
+    cards.forEach(function (c) {
+      c.querySelector('.rc__sound').addEventListener('click', function (e) { e.stopPropagation(); toggleSound(c); });
+    });
+    Array.prototype.forEach.call(hints, function (h) {
+      h.addEventListener('click', function () {
+        inView = true;
+        toggleSound(active || cards[0]);
+      });
+    });
+    document.addEventListener('reelviewer', function (e) {
+      paused = e.detail;
+      if (paused && active) { active.querySelector('video').pause(); active.classList.remove('is-playing'); }
+      else if (!paused && active) activate(active);
+    });
+    paintSound();
+  }
+
+  // gallery category filter
+  function initReelFilter() {
+    var bar = document.querySelector('[data-reel-filters]');
+    if (!bar) return;
+    var items = document.querySelectorAll('.reel-grid [data-reel]');
+    bar.addEventListener('click', function (e) {
+      var btn = e.target.closest('.filter');
+      if (!btn) return;
+      var key = btn.getAttribute('data-filter');
+      Array.prototype.forEach.call(bar.querySelectorAll('.filter'), function (b) {
+        b.classList.toggle('is-active', b === btn);
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+      });
+      Array.prototype.forEach.call(items, function (it) {
+        it.hidden = !(key === 'all' || it.getAttribute('data-cat') === key);
+      });
+    });
+  }
+
+  function initHeroVideo() {
+    if (!reduceMotion && !saveData) return;
+    Array.prototype.forEach.call(document.querySelectorAll('.hero video'), function (v) {
+      v.removeAttribute('autoplay');
+      v.pause();
+    });
+  }
+
   /* ---------------- misc ---------------- */
   function initMisc() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-year]'), function (n) {
@@ -356,6 +606,10 @@
     initLightbox();
     initForm();
     initWidgets();
+    initReelViewer();
+    initReelStrip();
+    initReelFilter();
+    initHeroVideo();
     initMisc();
   }
 
